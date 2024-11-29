@@ -1,0 +1,15 @@
+ffmpeg
+libsndfile1
+libportaudio2
+portaudio19-dev
+python3-dev
+libasound-dev
+python-dev
+python3-dev
+build-essential
+swig
+libpulse-dev
+libasound2-dev
+libportaudiocpp0
+libportaudio2
+libasound2
