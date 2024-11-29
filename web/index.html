@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breakcore AI Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #1a1a1a 0%, #4a0000 100%);
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen text-white">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-4xl font-bold text-center mb-8">Breakcore AI Generator</h1>
+        
+        <div class="max-w-2xl mx-auto space-y-8">
+            <!-- Text Prompt Generation -->
+            <div class="bg-black bg-opacity-50 p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-4">Generate from Text</h2>
+                <form id="textForm" class="space-y-4">
+                    <textarea
+                        id="prompt"
+                        name="prompt"
+                        class="w-full p-3 bg-gray-800 rounded-lg"
+                        placeholder="Enter your prompt (e.g., 'Create an intense breakcore track with heavy drum breaks and glitch effects')"
+                        rows="3"
+                    ></textarea>
+                    <button
+                        type="submit"
+                        class="w-full py-2 px-4 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                    >
+                        Generate
+                    </button>
+                </form>
+            </div>
+
+            <!-- File Upload Generation -->
+            <div class="bg-black bg-opacity-50 p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-4">Generate from Audio</h2>
+                <form id="audioForm" class="space-y-4">
+                    <div class="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center">
+                        <input
+                            type="file"
+                            id="audioFile"
+                            name="file"
+                            accept=".mp3"
+                            class="hidden"
+                        >
+                        <label
+                            for="audioFile"
+                            class="cursor-pointer text-gray-300 hover:text-white"
+                        >
+                            Click to upload MP3 file or drag and drop
+                        </label>
+                    </div>
+                    <button
+                        type="submit"
+                        class="w-full py-2 px-4 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                    >
+                        Generate
+                    </button>
+                </form>
+            </div>
+
+            <!-- Generated Audio Player -->
+            <div id="playerContainer" class="bg-black bg-opacity-50 p-6 rounded-lg hidden">
+                <h2 class="text-2xl font-semibold mb-4">Generated Track</h2>
+                <audio id="audioPlayer" controls class="w-full">
+                    Your browser does not support the audio element.
+                </audio>
+                <button
+                    id="downloadBtn"
+                    class="mt-4 w-full py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                >
+                    Download
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('textForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const prompt = document.getElementById('prompt').value;
+            const formData = new FormData();
+            formData.append('prompt', prompt);
+            
+            try {
+                const response = await fetch('/generate/from-text', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    updatePlayer(blob);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+
+        document.getElementById('audioForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = document.getElementById('audioFile').files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch('/generate/from-audio', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    updatePlayer(blob);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+
+        function updatePlayer(blob) {
+            const player = document.getElementById('audioPlayer');
+            const playerContainer = document.getElementById('playerContainer');
+            const downloadBtn = document.getElementById('downloadBtn');
+            
+            const audioUrl = URL.createObjectURL(blob);
+            player.src = audioUrl;
+            playerContainer.classList.remove('hidden');
+            
+            downloadBtn.onclick = () => {
+                const a = document.createElement('a');
+                a.href = audioUrl;
+                a.download = 'generated-breakcore.mp3';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            };
+        }
+    </script>
+</body>
+</html>
