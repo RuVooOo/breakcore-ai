@@ -5,6 +5,8 @@ import numpy as np
 import openai
 from dotenv import load_dotenv
 import os
+import io
+from pydub import AudioSegment
 
 class BreakcoreGenerator:
     def __init__(self, device="cpu"):
@@ -14,27 +16,50 @@ class BreakcoreGenerator:
         load_dotenv()
         openai.api_key = os.getenv("OPENAI_API_KEY")
     
-    def generate_from_prompt(self, prompt: str, duration: int = 30):
+    def generate_from_prompt(self, prompt: str, duration: int = 180):
         """Generate breakcore music from a text prompt using OpenAI"""
         try:
-            # Create a music generation prompt that emphasizes breakcore style
-            enhanced_prompt = f"""Create an intense breakcore track with the following characteristics:
-            - Fast-paced drum breaks
-            - Glitch effects and distortion
-            - ULTRAKILL-style aggressive sound
-            - {prompt}
-            Make it chaotic but rhythmic."""
+            # Split generation into chunks if duration is long
+            chunk_duration = 60  # OpenAI's limit per request
+            num_chunks = (duration + chunk_duration - 1) // chunk_duration
+            audio_chunks = []
+            
+            for i in range(num_chunks):
+                current_duration = min(chunk_duration, duration - i * chunk_duration)
+                if current_duration <= 0:
+                    break
+                    
+                chunk_prompt = f"""Part {i+1}/{num_chunks} of: Create an intense breakcore track with the following characteristics:
+                - Fast-paced drum breaks
+                - Glitch effects and distortion
+                - ULTRAKILL-style aggressive sound
+                - {prompt}
+                Make it chaotic but rhythmic, ensuring smooth transitions between parts."""
 
-            # Generate music using OpenAI
-            response = openai.audio.generate(
-                model="music-2",  # Use the latest music model
-                prompt=enhanced_prompt,
-                duration=duration
-            )
+                # Generate music using OpenAI
+                response = openai.audio.generate(
+                    model="music-2",
+                    prompt=chunk_prompt,
+                    duration=current_duration
+                )
 
-            # Convert the response to numpy array
-            audio_data = response.audio.read()
-            return audio_data
+                # Convert response to AudioSegment
+                audio_data = response.audio.read()
+                audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
+                audio_chunks.append(audio_segment)
+
+            # Combine chunks if there are multiple
+            if len(audio_chunks) > 1:
+                combined_audio = audio_chunks[0]
+                for chunk in audio_chunks[1:]:
+                    combined_audio = combined_audio.append(chunk, crossfade=100)  # Add 100ms crossfade
+                
+                # Export to bytes
+                buffer = io.BytesIO()
+                combined_audio.export(buffer, format="mp3", bitrate="320k")
+                return buffer.getvalue()
+            else:
+                return audio_data
 
         except Exception as e:
             print(f"Error generating music: {str(e)}")
@@ -54,7 +79,7 @@ class BreakcoreGenerator:
                 reference_audio=reference_features
             )
 
-            # Convert the response to numpy array
+            # Convert the response to audio data
             audio_data = response.audio.read()
             return audio_data
 
@@ -75,7 +100,17 @@ class BreakcoreGenerator:
         
         # Add some basic effects
         audio = self.apply_breakcore_effects(torch.from_numpy(audio))
-        return audio.numpy()
+        
+        # Convert to MP3 bytes
+        buffer = io.BytesIO()
+        audio_segment = AudioSegment(
+            audio.numpy().tobytes(), 
+            frame_rate=self.sample_rate,
+            sample_width=2,
+            channels=1
+        )
+        audio_segment.export(buffer, format="mp3", bitrate="320k")
+        return buffer.getvalue()
     
     def apply_breakcore_effects(self, audio):
         """Apply breakcore-style effects to the generated audio"""

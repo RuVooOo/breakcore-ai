@@ -6,6 +6,7 @@ import numpy as np
 from model.generator import BreakcoreGenerator
 from audio.processor import AudioProcessor
 import tempfile
+import io
 
 # Page config
 st.set_page_config(
@@ -53,31 +54,33 @@ with text_tab:
         placeholder="Example: Create an intense breakcore track with heavy drum breaks and glitch effects",
         height=100
     )
-    duration = st.slider("Duration (seconds)", min_value=10, max_value=60, value=30)
+    duration = st.slider("Duration (minutes)", min_value=1, max_value=7, value=3)
     
     if st.button("Generate from Text", type="primary"):
-        with st.spinner("Generating music..."):
+        with st.spinner(f"Generating {duration} minute music track... This might take a while for longer tracks."):
             try:
-                # Generate music
-                audio_data = generator.generate_from_prompt(prompt, duration)
+                # Convert minutes to seconds
+                duration_seconds = duration * 60
                 
-                # Save to temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
-                    audio_processor.save_audio(audio_data, tmp_file.name)
-                    
-                    # Display audio player
-                    st.audio(tmp_file.name)
-                    
-                    # Download button
-                    with open(tmp_file.name, 'rb') as f:
-                        st.download_button(
-                            "Download Generated Track",
-                            f,
-                            file_name="generated_breakcore.mp3",
-                            mime="audio/mpeg"
-                        )
+                # Generate music
+                audio_data = generator.generate_from_prompt(prompt, duration_seconds)
+                
+                # Create a temporary file in memory
+                audio_bytes = io.BytesIO(audio_data)
+                
+                # Display audio player
+                st.audio(audio_bytes, format='audio/mp3')
+                
+                # Download button
+                st.download_button(
+                    "Download Generated Track",
+                    audio_data,
+                    file_name="generated_breakcore.mp3",
+                    mime="audio/mpeg"
+                )
             except Exception as e:
                 st.error(f"Error generating music: {str(e)}")
+                st.error("Please try again with a shorter duration or different prompt.")
 
 with audio_tab:
     st.header("Generate from Reference Audio")
