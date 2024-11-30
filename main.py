@@ -30,9 +30,14 @@ os.makedirs("output", exist_ok=True)
 os.makedirs("temp", exist_ok=True)
 
 # Initialize models and processors
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-generator = BreakcoreGenerator(device=device)
-audio_processor = AudioProcessor()
+try:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    generator = BreakcoreGenerator(device=device)
+    audio_processor = AudioProcessor()
+except Exception as e:
+    print(f"Error initializing models: {str(e)}")
+    raise RuntimeError("Failed to initialize AI models. Please check if model files are present in the model directory.")
 
 # Mount static files
 static_dir = Path(__file__).parent / "web"
@@ -61,6 +66,7 @@ async def generate_from_text(prompt: str = Form(...)):
 
 @app.post("/generate/from-audio")
 async def generate_from_audio(file: UploadFile = File(...)):
+    temp_path = None
     try:
         # Save uploaded file temporarily
         temp_path = f"temp/{file.filename}"
@@ -79,14 +85,34 @@ async def generate_from_audio(file: UploadFile = File(...)):
         audio_processor.save_audio(audio_data, output_path)
         
         # Clean up
-        os.remove(temp_path)
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
         
         return FileResponse(output_path, media_type="audio/mpeg")
     except Exception as e:
+        # Clean up on error
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={"error": f"Error processing audio: {str(e)}"}
         )
+
+# Add cleanup on shutdown
+@app.on_event("shutdown")
+async def cleanup():
+    try:
+        # Clean up temp and output directories
+        for dir_path in ["temp", "output"]:
+            if os.path.exists(dir_path):
+                for file in os.listdir(dir_path):
+                    file_path = os.path.join(dir_path, file)
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        print(f"Error removing file {file_path}: {str(e)}")
+    except Exception as e:
+        print(f"Error during cleanup: {str(e)}")
 
 if __name__ == "__main__":
     print("Starting Breakcore AI Generator...")

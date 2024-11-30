@@ -18,10 +18,22 @@ st.set_page_config(
 # Initialize models and processors
 @st.cache_resource
 def load_models():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return BreakcoreGenerator(device=device), AudioProcessor()
+    try:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        st.info(f"Using device: {device}")
+        generator = BreakcoreGenerator(device=device)
+        processor = AudioProcessor()
+        return generator, processor
+    except Exception as e:
+        st.error(f"Error initializing models: {str(e)}")
+        st.error("Please make sure all model files are present in the model directory.")
+        return None, None
 
 generator, audio_processor = load_models()
+
+if generator is None or audio_processor is None:
+    st.error("Failed to initialize the application. Please check the error messages above.")
+    st.stop()
 
 # Custom styling
 st.markdown("""
