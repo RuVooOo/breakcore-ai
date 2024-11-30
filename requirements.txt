@@ -15,7 +15,6 @@ sounddevice>=0.4.5
 music21>=8.1.0
 simpleaudio>=1.0.4
 demucs>=4.0.0
-samplerate>=0.1.0
 resampy>=0.4.2
 requests>=2.31.0
 tenacity>=8.2.2

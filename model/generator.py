@@ -14,11 +14,21 @@ class BreakcoreGenerator:
         self.sample_rate = 44100
         # Load environment variables
         load_dotenv()
-        openai.api_key = os.getenv("OPENAI_API_KEY")
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAI API key not found in environment variables. Please set OPENAI_API_KEY in your .env file.")
+        openai.api_key = self.api_key
     
     def generate_from_prompt(self, prompt: str, duration: int = 180):
         """Generate breakcore music from a text prompt using OpenAI"""
         try:
+            if not prompt:
+                raise ValueError("Prompt cannot be empty")
+                
+            # Validate duration
+            if duration <= 0 or duration > 600:  # Max 10 minutes
+                raise ValueError("Duration must be between 1 and 600 seconds")
+                
             # Split generation into chunks if duration is long
             chunk_duration = 60  # OpenAI's limit per request
             num_chunks = (duration + chunk_duration - 1) // chunk_duration
@@ -46,6 +56,9 @@ class BreakcoreGenerator:
                 # Convert response to AudioSegment
                 audio_data = response.audio.read()
                 audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
+                
+                # Normalize audio
+                audio_segment = audio_segment.normalize()
                 audio_chunks.append(audio_segment)
 
             # Combine chunks if there are multiple
@@ -54,9 +67,11 @@ class BreakcoreGenerator:
                 for chunk in audio_chunks[1:]:
                     combined_audio = combined_audio.append(chunk, crossfade=100)  # Add 100ms crossfade
                 
-                # Export to bytes
+                # Export to bytes with high quality
                 buffer = io.BytesIO()
-                combined_audio.export(buffer, format="mp3", bitrate="320k")
+                combined_audio.export(buffer, format="mp3", 
+                                   parameters=["-q:a", "0", "-b:a", "320k"],
+                                   tags={"artist": "Breakcore AI", "title": prompt[:30]})
                 return buffer.getvalue()
             else:
                 return audio_data
@@ -69,6 +84,9 @@ class BreakcoreGenerator:
     def generate_from_reference(self, reference_features):
         """Generate breakcore music similar to a reference track"""
         try:
+            if reference_features is None:
+                raise ValueError("Reference features cannot be None")
+                
             # Use reference features to guide the generation
             prompt = "Create a breakcore track similar to the reference, with intense drum breaks and glitch effects"
             
@@ -81,7 +99,17 @@ class BreakcoreGenerator:
 
             # Convert the response to audio data
             audio_data = response.audio.read()
-            return audio_data
+            
+            # Process the generated audio
+            audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
+            audio_segment = audio_segment.normalize()
+            
+            # Export with high quality
+            buffer = io.BytesIO()
+            audio_segment.export(buffer, format="mp3", 
+                               parameters=["-q:a", "0", "-b:a", "320k"],
+                               tags={"artist": "Breakcore AI", "title": "Reference-based Generation"})
+            return buffer.getvalue()
 
         except Exception as e:
             print(f"Error generating music: {str(e)}")
@@ -90,38 +118,57 @@ class BreakcoreGenerator:
     
     def _fallback_generation(self, duration: int = 30):
         """Fallback method for basic audio generation if API fails"""
-        # Generate basic waveform
-        samples = duration * self.sample_rate
-        t = np.linspace(0, duration, samples)
-        
-        # Generate base frequencies
-        base_freq = 440
-        audio = np.sin(2 * np.pi * base_freq * t)
-        
-        # Add some basic effects
-        audio = self.apply_breakcore_effects(torch.from_numpy(audio))
-        
-        # Convert to MP3 bytes
-        buffer = io.BytesIO()
-        audio_segment = AudioSegment(
-            audio.numpy().tobytes(), 
-            frame_rate=self.sample_rate,
-            sample_width=2,
-            channels=1
-        )
-        audio_segment.export(buffer, format="mp3", bitrate="320k")
-        return buffer.getvalue()
+        try:
+            # Generate basic waveform
+            samples = duration * self.sample_rate
+            t = np.linspace(0, duration, samples)
+            
+            # Generate more complex base sound
+            base_freq = 440
+            audio = np.sin(2 * np.pi * base_freq * t)  # Base sine wave
+            audio += 0.5 * np.sin(4 * np.pi * base_freq * t)  # First harmonic
+            audio += 0.25 * np.sin(6 * np.pi * base_freq * t)  # Second harmonic
+            
+            # Normalize
+            audio = audio / np.max(np.abs(audio))
+            
+            # Add some basic effects
+            audio = self.apply_breakcore_effects(torch.from_numpy(audio.astype(np.float32)))
+            
+            # Convert to MP3 bytes with high quality
+            buffer = io.BytesIO()
+            audio_segment = AudioSegment(
+                audio.numpy().tobytes(), 
+                frame_rate=self.sample_rate,
+                sample_width=2,
+                channels=1
+            )
+            audio_segment = audio_segment.normalize()
+            audio_segment.export(buffer, format="mp3", 
+                               parameters=["-q:a", "0", "-b:a", "320k"],
+                               tags={"artist": "Breakcore AI", "title": "Fallback Generation"})
+            return buffer.getvalue()
+        except Exception as e:
+            print(f"Error in fallback generation: {str(e)}")
+            raise
     
     def apply_breakcore_effects(self, audio):
         """Apply breakcore-style effects to the generated audio"""
-        # Add distortion
-        audio = torch.tanh(audio * 2)
-        
-        # Add random glitch effects
-        glitch_mask = (torch.rand_like(audio) > 0.95)
-        audio[glitch_mask] = audio[glitch_mask] * -1
-        
-        # Add compression
-        audio = torch.sign(audio) * torch.log1p(torch.abs(audio) * 10)
-        
-        return audio
+        try:
+            # Add distortion
+            audio = torch.tanh(audio * 2)
+            
+            # Add random glitch effects
+            glitch_mask = (torch.rand_like(audio) > 0.95)
+            audio[glitch_mask] = audio[glitch_mask] * -1
+            
+            # Add compression
+            audio = torch.sign(audio) * torch.log1p(torch.abs(audio) * 10)
+            
+            # Normalize
+            audio = audio / torch.max(torch.abs(audio))
+            
+            return audio
+        except Exception as e:
+            print(f"Error applying effects: {str(e)}")
+            return audio  # Return unmodified audio if effects fail
