@@ -7,7 +7,7 @@ import io
 from pydub import AudioSegment
 import openai
 import time
-from typing import Optional, List
+from typing import Optional, List, Callable
 import json
 from pathlib import Path
 
@@ -53,15 +53,22 @@ class BreakcoreGenerator:
                 audio_segment.export(processed_path, format="mp3", 
                                   parameters=["-q:a", "0", "-b:a", "320k"])
                 
-                # Create training example
+                # Create training example with enhanced prompting
                 training_example = {
                     "audio": str(processed_path),
-                    "prompt": f"Create breakcore music that sounds like this: {description}",
+                    "prompt": f"""Create breakcore music with these characteristics:
+                    - Style: {description}
+                    - Genre: Breakcore/Electronic
+                    - Tempo: Fast and aggressive
+                    - Elements: Complex drum breaks, glitch effects, distortion
+                    - Energy: High intensity, chaotic but rhythmic
+                    Make it sound authentic to the breakcore genre while matching the reference style.""",
                     "metadata": {
                         "genre": "Breakcore",
                         "style": "Electronic",
                         "tempo": "Fast",
-                        "description": description
+                        "description": description,
+                        "original_file": audio_file
                     }
                 }
                 training_data.append(training_example)
@@ -77,7 +84,8 @@ class BreakcoreGenerator:
             print(f"Error preparing training data: {str(e)}")
             raise
     
-    def train_model(self, training_config_path: str, epochs: int = 1) -> str:
+    def train_model(self, training_config_path: str, epochs: int = 1, 
+                   progress_callback: Optional[Callable] = None) -> str:
         """Fine-tune the model on breakcore music"""
         try:
             # Load training configuration
@@ -85,6 +93,8 @@ class BreakcoreGenerator:
                 training_data = json.load(f)
             
             print(f"Starting fine-tuning with {len(training_data)} examples...")
+            if progress_callback:
+                progress_callback(0, epochs, "Starting training...")
             
             # Create fine-tuning job
             response = openai.fine_tuning.create(
@@ -92,7 +102,7 @@ class BreakcoreGenerator:
                 training_files=training_data,
                 hyperparameters={
                     "n_epochs": epochs,
-                    "batch_size": 1,  # Audio files are processed one at a time
+                    "batch_size": 1,  # Process one track at a time
                     "learning_rate_multiplier": 0.1  # Conservative learning rate
                 }
             )
@@ -101,6 +111,7 @@ class BreakcoreGenerator:
             print(f"Fine-tuning job created: {job_id}")
             
             # Monitor training progress
+            current_epoch = 0
             while True:
                 status = openai.fine_tuning.retrieve(job_id)
                 print(f"Status: {status.status}")
@@ -108,9 +119,25 @@ class BreakcoreGenerator:
                 if status.status == "succeeded":
                     print("Fine-tuning completed successfully!")
                     self.fine_tuned_model = status.fine_tuned_model
+                    if progress_callback:
+                        progress_callback(epochs, epochs, "Training completed!")
                     return self.fine_tuned_model
+                
                 elif status.status == "failed":
                     raise Exception(f"Fine-tuning failed: {status.error}")
+                
+                elif status.status == "running":
+                    # Update progress based on training metrics
+                    if hasattr(status, 'training_metrics'):
+                        new_epoch = status.training_metrics.get('current_epoch', current_epoch)
+                        if new_epoch > current_epoch:
+                            current_epoch = new_epoch
+                            if progress_callback:
+                                progress_callback(
+                                    current_epoch,
+                                    epochs,
+                                    f"Training... Loss: {status.training_metrics.get('loss', 'N/A')}"
+                                )
                 
                 time.sleep(60)  # Check status every minute
                 
@@ -119,7 +146,7 @@ class BreakcoreGenerator:
             raise
     
     def generate_from_prompt(self, prompt: str, duration: int = 180, use_fine_tuned: bool = True) -> bytes:
-        """Generate breakcore music from a text prompt using OpenAI"""
+        """Generate breakcore music from a text prompt"""
         try:
             if not prompt:
                 raise ValueError("Prompt cannot be empty")
@@ -148,7 +175,7 @@ class BreakcoreGenerator:
                 - Industrial and chaotic sound design
                 - High energy and intense atmosphere
                 - {prompt}
-                Make it sound like a mix of ULTRAKILL's soundtrack and classic breakcore."""
+                Make it sound like authentic breakcore with your trained style."""
                 
                 # Generate music using OpenAI
                 response = openai.audio.generate(
@@ -157,11 +184,9 @@ class BreakcoreGenerator:
                     duration=current_duration
                 )
                 
-                # Convert response to AudioSegment
+                # Process audio
                 audio_data = response.read()
                 audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
-                
-                # Normalize audio
                 audio_segment = audio_segment.normalize()
                 audio_chunks.append(audio_segment)
             
@@ -184,47 +209,6 @@ class BreakcoreGenerator:
             print(f"Error generating music: {str(e)}")
             return self._fallback_generation(duration)
     
-    def generate_from_reference(self, reference_features: np.ndarray) -> bytes:
-        """Generate breakcore music similar to a reference track"""
-        try:
-            if reference_features is None:
-                raise ValueError("Reference features cannot be None")
-            
-            # Convert reference features to audio file
-            temp_file = io.BytesIO()
-            temp_segment = AudioSegment(
-                reference_features.tobytes(),
-                frame_rate=self.sample_rate,
-                sample_width=2,
-                channels=1
-            )
-            temp_segment.export(temp_file, format="mp3")
-            temp_file.seek(0)
-            
-            # Generate music using OpenAI with reference
-            response = openai.audio.generate(
-                model="music-2",
-                prompt="Create an intense breakcore track with fast drum breaks and glitch effects",
-                reference_audio=temp_file,
-                duration=min(300, len(reference_features) // self.sample_rate)  # Max 5 minutes
-            )
-            
-            # Process the generated audio
-            audio_data = response.read()
-            audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
-            audio_segment = audio_segment.normalize()
-            
-            # Export with high quality
-            buffer = io.BytesIO()
-            audio_segment.export(buffer, format="mp3",
-                               parameters=["-q:a", "0", "-b:a", "320k"],
-                               tags={"artist": "Breakcore AI", "title": "Reference-based Generation"})
-            return buffer.getvalue()
-            
-        except Exception as e:
-            print(f"Error generating music: {str(e)}")
-            return self._fallback_generation(30)
-    
     def _fallback_generation(self, duration: int = 30) -> bytes:
         """Fallback method for basic audio generation if model fails"""
         try:
@@ -237,6 +221,9 @@ class BreakcoreGenerator:
             audio = np.sin(2 * np.pi * base_freq * t)  # Base sine wave
             audio += 0.5 * np.sin(4 * np.pi * base_freq * t)  # First harmonic
             audio += 0.25 * np.sin(6 * np.pi * base_freq * t)  # Second harmonic
+            
+            # Add some randomization for variety
+            audio += np.random.randn(len(audio)) * 0.1
             
             # Normalize
             audio = audio / np.max(np.abs(audio))
@@ -273,6 +260,12 @@ class BreakcoreGenerator:
             
             # Add compression
             audio = torch.sign(audio) * torch.log1p(torch.abs(audio) * 10)
+            
+            # Add some randomized stutter effects
+            stutter_points = torch.randint(0, len(audio), (5,))
+            for point in stutter_points:
+                if point + 1000 < len(audio):
+                    audio[point:point+1000] = audio[point:point+100].repeat(10)
             
             # Normalize
             audio = audio / torch.max(torch.abs(audio))

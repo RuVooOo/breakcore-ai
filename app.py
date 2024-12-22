@@ -2,36 +2,30 @@ import streamlit as st
 import os
 from pathlib import Path
 import torch
-import numpy as np
 from model.generator import BreakcoreGenerator
-from audio.processor import AudioProcessor
 import tempfile
 import io
 
 # Page config
 st.set_page_config(
-    page_title="Breakcore AI Music Generator",
+    page_title="Breakcore AI Trainer",
     page_icon="🎵",
     layout="wide"
 )
 
-# Initialize models and processors
+# Initialize model
 @st.cache_resource
-def load_models():
+def load_model():
     try:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        st.info(f"Using device: {device}")
-        generator = BreakcoreGenerator(device=device)
-        processor = AudioProcessor()
-        return generator, processor
+        return BreakcoreGenerator(device=device)
     except Exception as e:
-        st.error(f"Error initializing models: {str(e)}")
-        st.error("Please make sure all model files are present in the model directory.")
-        return None, None
+        st.error(f"Error initializing model: {str(e)}")
+        return None
 
-generator, audio_processor = load_models()
+generator = load_model()
 
-if generator is None or audio_processor is None:
+if generator is None:
     st.error("Failed to initialize the application. Please check the error messages above.")
     st.stop()
 
@@ -44,96 +38,172 @@ st.markdown("""
     .main {
         color: white;
     }
+    .uploadedFile {
+        background-color: #2a2a2a;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .meter-container {
+        background: #2a2a2a;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+    }
+    .optimal-badge {
+        background: #00aa00;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        text-align: center;
+        margin: 10px 0;
+    }
+    .not-optimal-badge {
+        background: #aa0000;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        text-align: center;
+        margin: 10px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # Title and description
-st.title("🎵 Breakcore AI Music Generator")
+st.title("🎵 Breakcore AI Trainer")
 st.markdown("""
-Generate intense breakcore music inspired by ULTRAKILL's OST using AI! 
-You can either:
-- Enter a text prompt describing the music you want
-- Upload an MP3 file to generate similar music
+Train your own Breakcore AI by uploading MP3 samples! 
+1. Drop your breakcore MP3 files below
+2. Add descriptions for each track
+3. Train the model until optimal
 """)
 
-# Create tabs for different generation methods
-text_tab, audio_tab = st.tabs(["Generate from Text", "Generate from Audio"])
+# Initialize session state for tracking files
+if 'trained_files' not in st.session_state:
+    st.session_state.trained_files = []
+if 'total_training_time' not in st.session_state:
+    st.session_state.total_training_time = 0
 
-with text_tab:
-    st.header("Generate from Text Prompt")
-    prompt = st.text_area(
-        "Enter your prompt",
-        placeholder="Example: Create an intense breakcore track with heavy drum breaks and glitch effects",
-        height=100
-    )
-    duration = st.slider("Duration (minutes)", min_value=1, max_value=7, value=3)
+# Training Progress Meter
+st.markdown("<div class='meter-container'>", unsafe_allow_html=True)
+st.subheader("Training Progress")
+
+# Calculate progress (minimum 10 files for optimal)
+OPTIMAL_FILES = 10
+current_files = len(st.session_state.trained_files)
+progress = min(current_files / OPTIMAL_FILES * 100, 100)
+
+# Display progress bar
+progress_bar = st.progress(int(progress))
+
+# Display status
+if progress >= 100:
+    st.markdown("<div class='optimal-badge'>AI Model Optimal - Ready for Use!</div>", unsafe_allow_html=True)
+else:
+    files_needed = OPTIMAL_FILES - current_files
+    st.markdown(f"<div class='not-optimal-badge'>Model Not Optimal - Please Upload {files_needed} More Files</div>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# File uploader for multiple MP3s
+uploaded_files = st.file_uploader(
+    "Drop your breakcore MP3 files here",
+    type=['mp3'],
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    st.write(f"Processing {len(uploaded_files)} new files")
     
-    if st.button("Generate from Text", type="primary"):
-        with st.spinner(f"Generating {duration} minute music track... This might take a while for longer tracks."):
-            try:
-                # Convert minutes to seconds
-                duration_seconds = duration * 60
-                
-                # Generate music
-                audio_data = generator.generate_from_prompt(prompt, duration_seconds)
-                
-                # Create a temporary file in memory
-                audio_bytes = io.BytesIO(audio_data)
-                
-                # Display audio player
-                st.audio(audio_bytes, format='audio/mp3')
-                
-                # Download button
-                st.download_button(
-                    "Download Generated Track",
-                    audio_data,
-                    file_name="generated_breakcore.mp3",
-                    mime="audio/mpeg"
+    # Create a form for descriptions
+    with st.form("training_form"):
+        descriptions = {}
+        
+        for file in uploaded_files:
+            if file.name not in st.session_state.trained_files:
+                st.markdown(f"<div class='uploadedFile'>", unsafe_allow_html=True)
+                st.audio(file, format='audio/mp3')
+                descriptions[file.name] = st.text_area(
+                    f"Description for {file.name}",
+                    placeholder="Describe the style, elements, and characteristics of this track",
+                    key=f"desc_{file.name}"
                 )
+                st.markdown("</div>", unsafe_allow_html=True)
+        
+        train_button = st.form_submit_button("Train on These Files")
+        
+        if train_button and all(descriptions.values()):
+            try:
+                with st.spinner("Processing audio files..."):
+                    # Save uploaded files temporarily
+                    temp_dir = Path("temp_training")
+                    temp_dir.mkdir(exist_ok=True)
+                    
+                    audio_paths = []
+                    desc_list = []
+                    
+                    for file in uploaded_files:
+                        if file.name not in st.session_state.trained_files:
+                            temp_path = temp_dir / file.name
+                            with open(temp_path, "wb") as f:
+                                f.write(file.getvalue())
+                            audio_paths.append(str(temp_path))
+                            desc_list.append(descriptions[file.name])
+                    
+                    if audio_paths:
+                        # Prepare and start training
+                        st.info("Preparing training data...")
+                        config_path = generator.prepare_training_data(audio_paths, desc_list)
+                        
+                        st.info("Training on new files... This might take a while.")
+                        progress_bar = st.progress(0)
+                        
+                        def progress_callback(epoch, total_epochs, status):
+                            progress = (epoch / total_epochs) * 100
+                            progress_bar.progress(int(progress))
+                            st.write(f"Epoch {epoch}/{total_epochs}: {status}")
+                        
+                        model_id = generator.train_model(
+                            config_path,
+                            epochs=3,  # Fixed epochs for consistency
+                            progress_callback=progress_callback
+                        )
+                        
+                        # Update trained files list
+                        for file in uploaded_files:
+                            if file.name not in st.session_state.trained_files:
+                                st.session_state.trained_files.append(file.name)
+                        
+                        # Clean up
+                        for path in audio_paths:
+                            os.remove(path)
+                        temp_dir.rmdir()
+                        
+                        st.success(f"Training completed! Model ID: {model_id}")
+                        
+                        # Force rerun to update progress meter
+                        st.experimental_rerun()
+                    
             except Exception as e:
-                st.error(f"Error generating music: {str(e)}")
-                st.error("Please try again with a shorter duration or different prompt.")
+                st.error(f"Error during training: {str(e)}")
+        elif train_button:
+            st.warning("Please provide descriptions for all tracks.")
 
-with audio_tab:
-    st.header("Generate from Reference Audio")
-    uploaded_file = st.file_uploader("Upload an MP3 file", type=['mp3'])
-    
-    if uploaded_file is not None:
-        if st.button("Generate from Audio", type="primary"):
-            with st.spinner("Generating music..."):
-                try:
-                    # Save uploaded file temporarily
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_input:
-                        tmp_input.write(uploaded_file.read())
-                        
-                    # Process the audio file
-                    reference_features = audio_processor.extract_features(tmp_input.name)
-                    
-                    # Generate similar music
-                    audio_data = generator.generate_from_reference(reference_features)
-                    
-                    # Save generated audio
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_output:
-                        audio_processor.save_audio(audio_data, tmp_output.name)
-                        
-                        # Display audio player
-                        st.audio(tmp_output.name)
-                        
-                        # Download button
-                        with open(tmp_output.name, 'rb') as f:
-                            st.download_button(
-                                "Download Generated Track",
-                                f,
-                                file_name="generated_breakcore.mp3",
-                                mime="audio/mpeg"
-                            )
-                    
-                    # Clean up
-                    os.unlink(tmp_input.name)
-                    os.unlink(tmp_output.name)
-                except Exception as e:
-                    st.error(f"Error generating music: {str(e)}")
+# Generate button (only show if model is optimal)
+if progress >= 100:
+    st.markdown("---")
+    if st.button("Generate Breakcore", type="primary"):
+        st.info("Generation feature coming soon! Model is ready for use.")
 
 # Footer
 st.markdown("---")
-st.markdown("Made with ❤️ using OpenAI and Streamlit")
+st.markdown("Made with ❤️ using OpenAI")
+
+# Display training stats
+st.sidebar.header("Training Stats")
+st.sidebar.write(f"Files Trained: {current_files}/{OPTIMAL_FILES}")
+st.sidebar.write(f"Progress: {int(progress)}%")
+if st.session_state.trained_files:
+    st.sidebar.write("Trained Files:")
+    for file in st.session_state.trained_files:
+        st.sidebar.write(f"- {file}")
